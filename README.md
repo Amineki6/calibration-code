@@ -75,6 +75,25 @@ python train.py \
 ```
 *Tip: When using foundation models, pass `--use_cached_features` to load pre-extracted features instead of running images through the heavy backbone.*
 
+### Recalibration
+
+Post-hoc recalibration of trained models, utilizing **groupwise beta calibration**. This technique (Prevalence-aware calibration) adjusts the model's predicted probabilities across different subpopulation groups to mitigate shortcut learning.
+
+You can run batch evaluation of your final checkpoints before and after recalibration using `eval_recalibrated_runs.py`:
+
+```bash
+python eval_recalibrated_runs.py \
+    --base-path /path/to/runs_directory \
+    --runs run_1 run_2 \
+    --data-dir /path/to/data \
+    --beta-params abm
+```
+
+**Key Arguments:**
+- `--base-path`: The root directory where your run outputs are stored.
+- `--runs`: Specific run directory names to evaluate. You can alternatively provide a text file using `--runs-file`.
+- `--calibration-val-csv`: Provide an explicit validation CSV file used for fitting the beta calibrators. If omitted, it defaults to the checkpoint's validation split.
+
 ## Configuration
 
 Default hyperparameters and training parameters are managed in `config.py` using `ExperimentConfig`. You can override most of these from the command line.
