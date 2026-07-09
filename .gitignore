@@ -1,0 +1,17 @@
+/data
+
+_prev/
+__pycache__/
+
+output/*
+wandb/*
+
+design/
+extracted_samples/
+
+.DS_Store
+
+wandb/
+.vscode/
+.benchmarks/
+.pytest_cache/

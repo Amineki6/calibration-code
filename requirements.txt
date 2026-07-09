@@ -1,0 +1,17 @@
+coolname
+numpy
+optuna
+pandas
+protobuf
+pytest
+pydicom
+pytorch-lightning
+scikit-learn
+sentencepiece
+torch
+torcheval
+torchvision
+tqdm
+transformers
+wandb
+mup
