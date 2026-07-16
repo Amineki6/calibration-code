@@ -17,6 +17,6 @@ wandb/
 .pytest_cache/
 
 *.egg-info/
-papers/*
+papers/
 .ruff_cache/
 .mypy_cache/
