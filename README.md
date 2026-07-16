@@ -17,8 +17,8 @@ paper link : [insert link here]
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/Amineki6/calibration-code.git
-cd calibration-code
+git clone https://github.com/Amineki6/calibration.git
+cd calibration
 ```
 
 2. Create a virtual environment and install the required dependencies:
