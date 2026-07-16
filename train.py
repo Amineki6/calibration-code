@@ -1,83 +1,76 @@
 import os
 import sys
 import logging
-import argparse
 from pathlib import Path
-import json
 import coolname
-import datetime
 
 import torch
+import pytorch_lightning as pl
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 # W&B Cluster Timeouts
 os.environ["WANDB_HTTP_TIMEOUT"] = "120"
 os.environ["WANDB_INIT_TIMEOUT"] = "300"
 os.environ["WANDB__SERVICE_WAIT"] = "300"
 
-import optuna
-import pytorch_lightning as pl
-from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-
 # Local imports
 from config import ExperimentConfig, get_config
 from model import CXP_Model
 import methods
 from utils import run_jtt_stage1, TeeStream
-
 from lightning_module import CXPLightningModule
 from lightning_datamodule import CXPDataModule
 
-# Global args placeholder
-GLOBAL_ARGS: argparse.Namespace = argparse.Namespace()
+from args import parse_args
+from optimization import run_optimization_study
 
-# PyTorch Optimization Settings
-torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.deterministic = False
-torch.set_float32_matmul_precision('high')
 
 # Register safe globals for checkpoint loading.
-# PyTorch 2.6 defaults to weights_only=True and may block pathlib classes.
 import pathlib
-torch.serialization.add_safe_globals([
-    ExperimentConfig,
-    pathlib.PosixPath,
-    pathlib.PurePosixPath,
-    pathlib.PureWindowsPath,
-    pathlib.WindowsPath,
-])
+
+torch.serialization.add_safe_globals(
+    [
+        ExperimentConfig,
+        pathlib.PosixPath,
+        pathlib.PurePosixPath,
+        pathlib.PureWindowsPath,
+        pathlib.WindowsPath,
+    ]
+)
 
 
 def _infer_default_out_dir(data_dir: Path) -> Path:
     """Infer the run output root from the dataset root."""
     return data_dir / "runs"
 
+
 def setup_logging(root_dir):
     log_path = root_dir / "optuna_training.log"
-    
+
     # Create or append to the log file
-    log_file = open(log_path, 'a', encoding='utf-8')
-    
+    log_file = open(log_path, "a", encoding="utf-8")
+
     # Overwrite stdout and stderr
     sys.stdout = TeeStream(sys.stdout, log_file)
     sys.stderr = TeeStream(sys.stderr, log_file)
-    
+
     # Use only StreamHandler, since Tee will capture its stderr output
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stderr)
-        ],
-        force=True
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stderr)],
+        force=True,
     )
 
     def exception_handler(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
-        logging.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-    
+        logging.critical(
+            "Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback)
+        )
+
     sys.excepthook = exception_handler
 
 
@@ -87,25 +80,30 @@ def _stage_banner(title: str) -> None:
     logging.info("=" * 72)
 
 
-def _get_method_lambda_items(config: ExperimentConfig) -> list[tuple[str, float | int | str]]:
-    if config.method_name == "supcon":
+def _get_method_lambda_items(
+    config: ExperimentConfig,
+) -> list[tuple[str, float | int | str]]:
+    if config.method == "supcon":
         return [
             ("supcon_lambda", config.supcon_lambda),
             ("supcon_temperature", config.supcon_temperature),
         ]
-    if config.method_name == "mmd":
+    if config.method == "mmd":
         return [("mmd_lambda", config.mmd_lambda)]
-    if config.method_name == "cdan":
+    if config.method == "cdan":
         return [
             ("cdan_lambda", config.cdan_lambda),
             ("cdan_entropy", int(config.cdan_entropy)),
         ]
-    if config.method_name == "score_matching":
+    if config.method == "score_matching":
         return [
             ("score_matching_lambda", config.score_matching_lambda),
-            ("score_matching_min_subgroup_count", config.score_matching_min_subgroup_count),
+            (
+                "score_matching_min_subgroup_count",
+                config.score_matching_min_subgroup_count,
+            ),
         ]
-    if config.method_name == "dataset_score_matching":
+    if config.method == "dataset_score_matching":
         return [
             ("dataset_score_matching_lambda", config.dataset_score_matching_lambda),
             (
@@ -113,12 +111,12 @@ def _get_method_lambda_items(config: ExperimentConfig) -> list[tuple[str, float 
                 config.dataset_score_matching_min_subgroup_count,
             ),
         ]
-    if config.method_name == "jtt":
+    if config.method == "jtt":
         return [
             ("jtt_lambda", config.jtt_lambda),
             ("jtt_duration", config.jtt_duration),
         ]
-    if config.method_name == "soft_equalized_odds":
+    if config.method == "soft_equalized_odds":
         return [
             ("soft_eo_lambda", config.soft_eo_lambda),
             ("soft_eo_mode", config.soft_eo_mode),
@@ -130,64 +128,82 @@ def _get_method_lambda_items(config: ExperimentConfig) -> list[tuple[str, float 
         ]
     return []
 
-def run_lightning_training(config, trial_number, study_root, trial=None, wandb_group=None, run_name=None, run_phase: str = "unspecified"):
+
+def run_lightning_training(
+    args,
+    config,
+    trial_number,
+    study_root,
+    trial=None,
+    wandb_group=None,
+    run_name=None,
+    run_phase: str = "unspecified",
+):
     """
-    Helper function to run the Lightning training loop. 
+    Helper function to run the Lightning training loop.
     Used for both Optimization Objective and Final Evaluation.
     """
-    
+
     logging.info(
         "[PHASE=%s] Starting run: trial_number=%s, run_name=%s, method=%s, monitor=%s",
         run_phase,
         trial_number,
         run_name if run_name is not None else f"trial_{trial_number}",
-        config.method_name,
+        config.method,
         config.select_chkpt_on,
     )
     lambda_items = _get_method_lambda_items(config)
     if lambda_items:
-        logging.info("[PHASE=%s] Method coefficients: %s", run_phase, ", ".join([f"{k}={v}" for k, v in lambda_items]))
+        logging.info(
+            "[PHASE=%s] Method coefficients: %s",
+            run_phase,
+            ", ".join([f"{k}={v}" for k, v in lambda_items]),
+        )
 
     # --- SETUP DATA ---
-    datamodule = CXPDataModule(config, debug=GLOBAL_ARGS.debug)
-    
+    datamodule = CXPDataModule(config, debug=args.debug)
+
     # --- METHOD ---
-    method = methods.get_method(config.method_name, config)
-    
+    method = methods.get_method(config.method, config)
+
     # --- JTT STAGE 1 ---
-    if config.method_name == "jtt":
+    if config.method == "jtt":
         run_jtt_stage1(
-            config=config,
-            method=method,
-            datamodule=datamodule,
-            study_root=study_root,
-            trial_number=trial_number,
-            run_name=run_name,
+            config,
+            method,
+            datamodule,
+            study_root,
+            trial_number,
+            run_name,
             wandb_group=wandb_group,
-            debug=GLOBAL_ARGS.debug
+            debug=args.debug,
+            no_wandb=args.no_wandb,
         )
 
     # --- MAIN TRAINING ---
-    
+
     # Init Model
-    model = CXP_Model(method, backbone=config.backbone, use_cached_features=config.use_cached_features)
+    model = CXP_Model(
+        method, backbone=config.backbone, use_cached_features=config.use_cached_features
+    )
     pl_module = CXPLightningModule(model, method, config)
-    
+
     # Logger
-    final_run_name = run_name if run_name else f"{GLOBAL_ARGS.study_name}_trial_{trial_number}"
+    final_run_name = run_name if run_name else f"{args.study_name}_trial_{trial_number}"
     wandb_logger = WandbLogger(
-        project="cxr_optuna_study", 
-        group=wandb_group, 
+        project="cxr_optuna_study",
+        group=wandb_group,
         name=final_run_name,
         config=config.__dict__,
         save_dir=str(study_root),
-        id=f"{final_run_name}_{coolname.generate_slug(2)}"
+        id=f"{final_run_name}_{coolname.generate_slug(2)}",
+        mode="disabled" if args.no_wandb else "online",
     )
-    
+
     # Checkpointing Logic
     monitor_metric = ""
     mode = ""
-    
+
     if config.select_chkpt_on.upper() == "AUROC":
         monitor_metric = "val/auroc"
         mode = "max"
@@ -206,19 +222,19 @@ def run_lightning_training(config, trial_number, study_root, trial=None, wandb_g
     elif config.select_chkpt_on.upper() == "WORST_GROUP":
         monitor_metric = "val/worst_group_accuracy"
         mode = "max"
-    
+
     checkpoint_filename = f"trial_{trial_number}_best"
-    
+
     checkpoint_callback = ModelCheckpoint(
         dirpath=study_root / "checkpoints",
         filename=checkpoint_filename,
         monitor=monitor_metric,
         mode=mode,
         save_top_k=1,
-        save_last=False
+        save_last=False,
     )
-    
-    lr_monitor = LearningRateMonitor(logging_interval='epoch')
+
+    lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
     # Trainer
     trainer = pl.Trainer(
@@ -231,40 +247,45 @@ def run_lightning_training(config, trial_number, study_root, trial=None, wandb_g
         log_every_n_steps=10,
         num_sanity_val_steps=0,
         precision="16-mixed",
+        deterministic=True,  # Enforce reproducibility
     )
-    
+
     logging.info("[PHASE=%s] Entering train/validation loop.", run_phase)
 
     # Fit
     trainer.fit(pl_module, datamodule=datamodule)
-    
+
     # Get Best Metric Value
     best_score = checkpoint_callback.best_model_score
     if best_score is not None:
         best_score = best_score.item()
     else:
-        best_score = 0.0 if mode == "max" else float('inf')
+        best_score = 0.0 if mode == "max" else float("inf")
 
     # --- TESTING ---
-    # Only run testing if this is a Final Eval run (trial is None or indicated)
-    # Actually, for Optuna we usually don't run test set. 
-    # But if `run_name` is provided (final eval), we do.
     test_results = None
     if run_name is not None:
-        logging.info("[PHASE=%s] Entering test loop (best-checkpoint evaluation).", run_phase)
-        # Load Best Model
+        logging.info(
+            "[PHASE=%s] Entering test loop (best-checkpoint evaluation).", run_phase
+        )
         best_model_path = checkpoint_callback.best_model_path
         if best_model_path:
-            test_results = trainer.test(pl_module, datamodule=datamodule, ckpt_path=best_model_path)
+            test_results = trainer.test(
+                pl_module, datamodule=datamodule, ckpt_path=best_model_path
+            )
         else:
-            logging.warning("[PHASE=%s] No best checkpoint found; testing current in-memory weights.", run_phase)
+            logging.warning(
+                "[PHASE=%s] No best checkpoint found; testing current in-memory weights.",
+                run_phase,
+            )
             test_results = trainer.test(pl_module, datamodule=datamodule)
 
     wandb_logger.experiment.finish()
-    
+
     # Cleanup
     del trainer, pl_module, model, datamodule
     import gc
+
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -272,20 +293,21 @@ def run_lightning_training(config, trial_number, study_root, trial=None, wandb_g
     logging.info("[PHASE=%s] Run complete. best_score=%s", run_phase, best_score)
     return best_score, test_results
 
-def run_final_evaluation_runs(args, best_params):
+
+def run_final_evaluation_runs(args, best_params, study_root):
     final_config = get_config(args)
-    
+
     # Apply Best Params
     for k, v in best_params:
         if hasattr(final_config, k):
             setattr(final_config, k, v)
-            
+
     if args.debug:
         final_config.epochs = 2
         final_config.batch_size = 4
         final_config.num_workers = 0
 
-    eval_root = GLOBAL_ARGS.study_root / "final_evaluation"
+    eval_root = study_root / "final_evaluation"
     eval_root.mkdir(exist_ok=True)
 
     lambda_items = _get_method_lambda_items(final_config)
@@ -297,12 +319,13 @@ def run_final_evaluation_runs(args, best_params):
 
     import numpy as np
     from collections import defaultdict
-    
+
     all_test_metrics = defaultdict(list)
 
     for i in range(args.n_eval_runs):
         run_name = f"{args.study_name}_final_run_{i}"
         _, test_results = run_lightning_training(
+            args=args,
             config=final_config,
             trial_number=i,
             study_root=eval_root,
@@ -310,14 +333,13 @@ def run_final_evaluation_runs(args, best_params):
             run_name=run_name,
             run_phase=f"final_eval_run_{i}",
         )
-        
+
         if test_results is not None and len(test_results) > 0:
-            # test_results is a list of dicts (one for each dataloader, usually combined into one dict by lightning)
             res_dict = test_results[0]
             for k, v in res_dict.items():
                 if k.startswith("test/") or k.startswith("test_"):
                     all_test_metrics[k].append(v)
-                    
+
     if all_test_metrics:
         logging.info("===== FINAL RESULTS ACROSS RUNS =====")
         if lambda_items:
@@ -333,171 +355,83 @@ def run_final_evaluation_runs(args, best_params):
             logging.info(f"{k}: {mean_val:.4f} +/- {std_val:.4f}")
         logging.info("=====================================")
 
-def objective(trial):
-    study_root = GLOBAL_ARGS.study_root
-    config = get_config(GLOBAL_ARGS, trial)
 
-    best_score, _ = run_lightning_training(
-        config=config, 
-        trial_number=trial.number, 
-        study_root=study_root,
-        trial=trial,
-        wandb_group=GLOBAL_ARGS.study_name,
-        run_phase=f"optuna_trial_{trial.number}",
-    )
+def main():
+    args = parse_args()
 
-    chkpt_path = study_root / "checkpoints" / f"trial_{trial.number}_best.ckpt"
-    if chkpt_path.exists():
-         chkpt_path.unlink()
+    # Enforce Reproducibility
+    pl.seed_everything(42, workers=True)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.set_float32_matmul_precision("high")
 
-    return best_score
+    config = get_config(args)
+    data_dir = Path(config.data_dir)
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-
-    # Path Arguments
-    parser.add_argument('--data_dir', type=Path, default=Path('data'), help='Directory above /CheXpert-v1.0-small')
-    parser.add_argument('--csv_dir', type=Path, default=Path('csv_data'), help='Directory containing CSV files')
-    parser.add_argument(
-        '--out_dir',
-        type=Path,
-        default=None,
-        help='Output directory for logs/checkpoints. If omitted, defaults to <data_dir>/runs.',
-    )
-    parser.add_argument('--features_dir', type=Path, default=Path('features_cache'), help='Directory containing cached foundation model features')
-    
-    # Study Arguments
-    parser.add_argument('--study_name', type=str, default=None, help='Name of the study. If not provided, generates a random name.')
-    parser.add_argument('--n_trials', type=int, default=20, help='Number of Optuna trials to run')
-    parser.add_argument('--n_eval_runs', type=int, default=0, help='Number of final evaluation runs using best params (default: 0)')
-    parser.add_argument('--balance_train', type=lambda x: x.lower() == 'true', default=False, help='Use weighted sampler for training')
-    parser.add_argument('--balance_val', type=lambda x: x.lower() == 'true', default=False, help='Use balanced validation set')
-    parser.add_argument('--fairness_power', type=float, default=-1.0, help='Power-mean exponent for fairness aggregation across ordered group pairs; use 0 for geometric mean and -1 for harmonic mean (default).')
-    parser.add_argument('--select_chkpt_on', type=str, default="fairness", choices=["bce", "wbce", "auroc", "wauroc", "fairness", "worst_group"], help='Metric to select best model')
-    parser.add_argument('--debug', action='store_true', help='Run in debug mode (tiny data, 1 epoch, CPU/MPS friendly)')
-    
-    # Methods
-    parser.add_argument('--method', type=str, default='standard', choices=['standard', 'supcon', 'mmd', 'cdan', 'score_matching', 'dataset_score_matching', 'jtt', 'soft_equalized_odds'], help='Method to use for training (default: standard)')
-
-    # Backbone
-    parser.add_argument('--backbone', type=str, default='densenet', choices=['densenet', 'medsiglip', 'medimageinsight'], help='Feature extractor backbone. Foundation model backbones are frozen; only the clf head is trained.')
-    parser.add_argument('--use_cached_features', action='store_true', help='If True, bypass frozen backbones and load features directly from --features_dir. Only applicable for foundational models.')
-
-    # Training
-    parser.add_argument('--epochs', type=int, default=None, help='Number of training epochs (overrides config default of 150)')
-    parser.add_argument('--batch_size', type=int, default=None, help='Training batch size (overrides config default of 64)')
-
-    # Method-Specific Hyperparameters (Manual Overrides)
-    parser.add_argument('--supcon_lambda', type=float, default=None)
-    parser.add_argument('--supcon_temperature', type=float, default=None)
-    parser.add_argument('--mmd_lambda', type=float, default=None)
-    parser.add_argument('--cdan_lambda', type=float, default=None)
-    parser.add_argument('--cdan_entropy', type=lambda x: x.lower() == 'true', default=None)
-    parser.add_argument('--jtt_lambda', type=float, default=None)
-    parser.add_argument('--jtt_duration', type=int, default=None)
-    parser.add_argument('--soft_eo_lambda', type=float, default=None)
-    parser.add_argument('--soft_eo_mode', type=str, choices=['tpr', 'fpr', 'both'], default=None)
-    parser.add_argument('--soft_eo_tau', type=float, default=None)
-    parser.add_argument('--soft_eo_min_subgroup_count', type=int, default=None)
-    parser.add_argument('--soft_eo_temp_start', type=float, default=None)
-    parser.add_argument('--soft_eo_temp_end', type=float, default=None)
-    parser.add_argument('--soft_eo_temp_schedule_epochs', type=int, default=None)
-
-    # Run Comment
-    parser.add_argument('--comment', type=str, default="No comment provided", help='Comment for the run and what it represents')
-
-    args = parser.parse_args()
-
-    if args.out_dir is None:
-        args.out_dir = _infer_default_out_dir(args.data_dir)
-
-    # Automatically override select_chkpt_on for JTT
-    #if args.method == "jtt" :
-        #logging.info("Auto-overriding select_chkpt_on to 'worst_group' because method is 'jtt'.")
-        #args.select_chkpt_on = "worst_group"
+    if config.out_dir == "runs" or config.out_dir is None:
+        out_dir = _infer_default_out_dir(data_dir)
+    else:
+        out_dir = Path(config.out_dir)
 
     if args.study_name is None:
-        args.study_name = coolname.generate_slug(2) + '_' + args.backbone + '_' + args.method 
-    
-    study_root = args.out_dir / args.study_name
+        args.study_name = (
+            coolname.generate_slug(2) + "_" + config.backbone + "_" + config.method
+        )
+
+    study_root = out_dir / args.study_name
     study_root.mkdir(parents=True, exist_ok=True)
-    
-    GLOBAL_ARGS = args
-    GLOBAL_ARGS.study_root = study_root
 
     (study_root / "checkpoints").mkdir(exist_ok=True)
     (study_root / "predictions").mkdir(exist_ok=True)
 
     setup_logging(study_root)
-    _stage_banner(f"RUN START: study={args.study_name}, method={args.method}, n_trials={args.n_trials}, n_eval_runs={args.n_eval_runs}")
+    _stage_banner(
+        f"RUN START: study={args.study_name}, method={config.method}, n_trials={args.n_trials}, n_eval_runs={args.n_eval_runs}"
+    )
 
     # Optuna Setup
-    if args.n_trials == 0:
+    if args.n_trials == 0 or config.method == "standard":
         optimize = False
-        logging.info("Skipping optimization stage: n_trials == 0")
-    elif args.method == 'standard':
-        optimize = False
-        logging.info("Skipping optimization stage: method == 'standard'")
+        logging.info(
+            f"Skipping optimization stage: n_trials={args.n_trials}, method={config.method}"
+        )
     else:
         optimize = True
 
     best_params = []
-    
+
     if optimize:
         _stage_banner("STAGE 1/3: HYPERPARAMETER OPTIMIZATION (OPTUNA)")
-        start_time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
 
-        config_dict = vars(args)
-        config_dict["start_time"] = start_time_str
-        
-        with open(study_root / "experiment_config.json", "w") as f:
-            json.dump(config_dict, f, indent=4, default=str)
-        
-        logging.info(f"Starting Study: {args.study_name}")
-        logging.info(f"Device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
+        def objective(trial):
+            config = get_config(args, trial)
+            best_score, _ = run_lightning_training(
+                args=args,
+                config=config,
+                trial_number=trial.number,
+                study_root=study_root,
+                trial=trial,
+                wandb_group=args.study_name,
+                run_phase=f"optuna_trial_{trial.number}",
+            )
+            chkpt_path = study_root / "checkpoints" / f"trial_{trial.number}_best.ckpt"
+            if chkpt_path.exists():
+                chkpt_path.unlink()
+            return best_score
 
-        if 'AUROC' in args.select_chkpt_on.upper() or args.select_chkpt_on.upper() in ["FAIRNESS", "WORST_GROUP"]:
-            direction = "maximize"
-        else:
-            direction = "minimize"
-        
-        study = optuna.create_study(
-            sampler=optuna.samplers.GPSampler(),
-            direction=direction, 
-            study_name=args.study_name,
-            load_if_exists=True
-        )
-        
-        # ========================== RUN OPTIMIZATION ===============================================
+        best_params = run_optimization_study(args, study_root, objective)
 
-        from wandb.errors import CommError
-        study.optimize(
-            objective, 
-            n_trials=args.n_trials, 
-            gc_after_trial=True,
-            catch=(CommError, TimeoutError, ConnectionError)
-        )
-        best_params = list(study.best_trial.params.items())
-        
-        logging.info("===== STUDY COMPLETED =====")
-        logging.info(f"Best Trial Number: {study.best_trial.number}")
-        logging.info(f"Best Value ({args.select_chkpt_on}): {study.best_trial.value}")
-        logging.info("Best Params:")
-        for k, v in best_params:
-            logging.info(f"  {k}: {v}")
-    
     else:
         _stage_banner("STAGE 1/3: INITIAL TRAIN+EVAL (NO OPTIMIZATION)")
-        logging.info("Optimization disabled for this run configuration.")
-        
-        if args.n_eval_runs > 0:
-            logging.info("Skipping initial run because n_eval_runs > 0. We will proceed directly to final evaluation runs.")
-        else:
-            # Prepare Config
-            config = get_config(args)
 
-            # Run Single Training
+        if args.n_eval_runs > 0:
+            logging.info(
+                "Skipping initial run because n_eval_runs > 0. We will proceed directly to final evaluation runs."
+            )
+        else:
+            config = get_config(args)
             best_score, _ = run_lightning_training(
+                args=args,
                 config=config,
                 trial_number=0,
                 study_root=study_root,
@@ -511,9 +445,13 @@ if __name__ == '__main__':
     _stage_banner("STAGE 2/3: TRANSITION TO FINAL EVALUATION")
     if args.n_eval_runs > 0:
         _stage_banner(f"STAGE 3/3: FINAL EVALUATION RUNS ({args.n_eval_runs} seeds)")
-        run_final_evaluation_runs(args, best_params)
+        run_final_evaluation_runs(args, best_params, study_root)
     else:
         _stage_banner("STAGE 3/3: FINAL EVALUATION RUNS (SKIPPED)")
         logging.info("No final evaluation runs requested (n_eval_runs == 0).")
 
     _stage_banner("RUN COMPLETE")
+
+
+if __name__ == "__main__":
+    main()

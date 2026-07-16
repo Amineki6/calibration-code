@@ -1,12 +1,16 @@
-# Prevalence-aware calibration is all you need for shortcut learning mitigation
+# Shortcut Learning is a Calibration Problem
 
 <p align="center">
   <img src="images/thumbnail.jpg" alt="Thumbnail">
 </p>
 
-This repository contains the codebase for research on **Shortcut Learning Mitigation**, specifically tailored for medical imaging (e.g., Chest X-Rays). The framework is designed to train, evaluate, and tune models robust to shortcut features (spurious correlations).
+Code repository supporting the paper "Shortcut Learning is a Calibration Problem" 
 
-It includes integrations for automated hyperparameter tuning via [Optuna](https://optuna.org/) and experiment tracking via [Weights & Biases (W&B)](https://wandb.ai/).
+**Mohamed Amine Kina, Eike Petersen**
+
+paper link : [insert link here]
+
+
 
 
 ## Installation
@@ -22,26 +26,25 @@ cd calibration-code
 pip install -r requirements.txt
 ```
 
-*Note: Ensure you have a compatible version of PyTorch installed for your hardware (CUDA/MPS).*
-
 ## Project Structure
 
 - `train.py`: The main entry point for running training, Optuna sweeps, and final evaluations.
-- `config.py`: Centralized configuration dataclasses handling hyperparameters and file paths.
+- `config/`: Directory containing YAML configuration files (e.g., `default.yaml`).
+- `args.py` / `config.py`: Centralized configuration loading using `omegaconf`.
 - `dataset.py` / `lightning_datamodule.py`: Handling of data loading, caching, and batching.
 - `model.py` / `lightning_module.py`: PyTorch Lightning model definitions and backbone integrations.
-- `methods/`: Directory containing all shortcut mitigation algorithms (e.g., `supcon.py`, `mmd.py`, `jtt.py`).
-- `eval_*.py`: Standalone scripts for evaluating reliability and recalibrating runs.
+- `methods/`: Directory containing all shortcut mitigation algorithms (e.g., `cdan.py`, `mmd.py`, `jtt.py`).
+- `calibration/`: Directory containing all scripts for groupwise recalibration and reliability evaluation.
 - `extract_features.py`: Script to extract and cache foundation model features.
 
 ## Implemented Methods
 
-You can select a shortcut mitigation algorithm via the `--method` argument. Supported methods include:
+You can select a shortcut mitigation algorithm by setting the `method` configuration parameter (e.g., `method=supcon`). Supported methods include:
 - `standard`: Standard Empirical Risk Minimization (ERM)
 - `supcon`: Supervised Contrastive Learning
-- `mmd`: Maximum Mean Discrepancy
+- `mmd`: Conditional Maximum Mean Discrepancy
 - `cdan`: Conditional Domain Adversarial Networks (CDAN+E)
-- `score_matching` & `dataset_score_matching`: Score Matching objectives
+- `score_matching` & `dataset_score_matching`: Conditional Score Matching (CSM) objectives
 - `soft_equalized_odds`: Soft Equalized Odds penalty
 - `jtt`: Just Train Twice
 
@@ -53,12 +56,12 @@ To run a standard baseline with no hyperparameter optimization (using default co
 
 ```bash
 python train.py \
-    --method standard \
-    --backbone densenet \
-    --data_dir /path/to/data \
-    --csv_dir /path/to/csv \
-    --epochs 50 \
-    --batch_size 64
+    method=standard \
+    backbone=densenet \
+    data_dir=/path/to/data \
+    csv_dir=/path/to/csv \
+    epochs=50 \
+    batch_size=64
 ```
 
 ### Hyperparameter Optimization
@@ -67,22 +70,22 @@ The framework is highly optimized for running Optuna trials to find the best mit
 
 ```bash
 python train.py \
-    --method supcon \
-    --backbone medsiglip \
-    --n_trials 20 \
-    --select_chkpt_on fairness \
-    --use_cached_features
+    --n_trials 50 \
+    method=score_matching \
+    backbone=medsiglip \
+    select_chkpt_on=fairness \
+    use_cached_features=true
 ```
-*Tip: When using foundation models, pass `--use_cached_features` to load pre-extracted features instead of running images through the heavy backbone.*
+*Tip: When using foundation models, pass `use_cached_features=true` to load pre-extracted features instead of running images through the heavy backbone. Make sure you run the `extract_features.py` script first.*
 
 ### Recalibration
 
 Post-hoc recalibration of trained models, utilizing **groupwise beta calibration**. This technique (Prevalence-aware calibration) adjusts the model's predicted probabilities across different subpopulation groups to mitigate shortcut learning.
 
-You can run batch evaluation of your final checkpoints before and after recalibration using `eval_recalibrated_runs.py`:
+You can run batch evaluation of your final checkpoints before and after recalibration using `calibration/eval_recalibrated_runs.py`:
 
 ```bash
-python eval_recalibrated_runs.py \
+python calibration/eval_recalibrated_runs.py \
     --base-path /path/to/runs_directory \
     --runs run_1 run_2 \
     --data-dir /path/to/data \
@@ -100,11 +103,11 @@ Default hyperparameters and training parameters are managed in `config.py` using
 
 For example, to manually override method-specific hyperparams instead of using Optuna:
 ```bash
-python train.py --method mmd --mmd_lambda 2.5 --epochs 100
+python train.py method=mmd mmd_lambda=2.5 epochs=50
 ```
 
 ## Logging and Tracking
 
 The project natively integrates with **Weights & Biases (W&B)**. 
-- Ensure you have run `wandb login` before starting a distributed sweep.
+- If you prefer to disable W&B tracking entirely, simply pass the `--no_wandb` flag to your `train.py` command.
 - A comprehensive `optuna_training.log` is also generated automatically inside the output directory.

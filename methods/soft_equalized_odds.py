@@ -22,7 +22,9 @@ class SoftEqualizedOddsLoss(nn.Module):
         self.mode = mode
         self.min_subgroup_count = max(1, int(min_subgroup_count))
 
-    def forward(self, logits: torch.Tensor, labels: torch.Tensor, sens: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, logits: torch.Tensor, labels: torch.Tensor, sens: torch.Tensor
+    ) -> torch.Tensor:
         probs = torch.sigmoid(logits.view(-1))
         labels = labels.view(-1)
         sens = sens.view(-1)
@@ -41,8 +43,8 @@ class SoftEqualizedOddsLoss(nn.Module):
         sens = sens.long() if sens.dtype.is_floating_point else sens
 
         soft_dec = torch.sigmoid(self.temperature * (probs - self.tau))
-        pos_mask = (labels == 1)
-        neg_mask = (labels == 0)
+        pos_mask = labels == 1
+        neg_mask = labels == 0
 
         losses = []
         unique_groups = sens.unique()
@@ -82,7 +84,9 @@ class SoftEqualizedOddsMethod(BaseMethod):
         self.lambda_val = getattr(config, "soft_eo_lambda", 1.0)
         self.temp_start = getattr(config, "soft_eo_temp_start", 0.0)
         self.temp_end = getattr(config, "soft_eo_temp_end", 25.0)
-        self.temp_schedule_epochs = max(1, int(getattr(config, "soft_eo_temp_schedule_epochs", 25)))
+        self.temp_schedule_epochs = max(
+            1, int(getattr(config, "soft_eo_temp_schedule_epochs", 25))
+        )
 
         self.soft_eo_loss = SoftEqualizedOddsLoss(
             tau=getattr(config, "soft_eo_tau", 0.5),
@@ -92,10 +96,16 @@ class SoftEqualizedOddsMethod(BaseMethod):
         )
 
     def set_epoch(self, epoch: int) -> None:
-        progress = min(max(epoch, 0), self.temp_schedule_epochs) / float(self.temp_schedule_epochs)
-        self.soft_eo_loss.temperature = self.temp_start + (self.temp_end - self.temp_start) * progress
+        progress = min(max(epoch, 0), self.temp_schedule_epochs) / float(
+            self.temp_schedule_epochs
+        )
+        self.soft_eo_loss.temperature = (
+            self.temp_start + (self.temp_end - self.temp_start) * progress
+        )
 
-    def get_model_components(self, num_features: int) -> tuple[nn.Module, Optional[nn.Module]]:
+    def get_model_components(
+        self, num_features: int
+    ) -> tuple[nn.Module, Optional[nn.Module]]:
         clf = nn.Sequential(
             nn.Linear(num_features, 512),
             nn.ReLU(),
@@ -115,7 +125,9 @@ class SoftEqualizedOddsMethod(BaseMethod):
 
         logits, _ = model_output
         bce_loss, wbce_loss = self.compute_bce_terms(logits, targets, weight=weight)
-        soft_eo_val = self.soft_eo_loss(logits=logits, labels=targets, sens=extra_info["drain"])
+        soft_eo_val = self.soft_eo_loss(
+            logits=logits, labels=targets, sens=extra_info["drain"]
+        )
         total_loss = bce_loss + self.lambda_val * soft_eo_val
 
         return total_loss, {

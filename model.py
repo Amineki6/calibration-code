@@ -22,7 +22,7 @@ def _build_encoder(backbone: str) -> tuple[nn.Module, int]:
     Foundation model encoders are returned with all parameters frozen.
     """
     if backbone == "densenet":
-        encoder = densenet121(weights='IMAGENET1K_V1')
+        encoder = densenet121(weights="IMAGENET1K_V1")
         num_features = encoder.classifier.in_features
         encoder.classifier = nn.Identity()
         return encoder, num_features
@@ -42,6 +42,7 @@ def _build_encoder(backbone: str) -> tuple[nn.Module, int]:
 
     elif backbone == "medsiglip":
         from transformers import AutoModel
+
         hf_id = "google/medsiglip-448"
         model = AutoModel.from_pretrained(hf_id)
         # SiglipModel has no visual_projection; image_embeds are the L2-normalised
@@ -53,8 +54,10 @@ def _build_encoder(backbone: str) -> tuple[nn.Module, int]:
         return encoder, num_features
 
     else:
-        raise ValueError(f"Unknown backbone: '{backbone}'. "
-                         f"Choose from: 'densenet', 'medsiglip', 'medimageinsight'.")
+        raise ValueError(
+            f"Unknown backbone: '{backbone}'. "
+            f"Choose from: 'densenet', 'medsiglip', 'medimageinsight'."
+        )
 
 
 def _freeze(module: nn.Module) -> None:
@@ -99,6 +102,7 @@ class _LionMedImageInsightEncoder(nn.Module):
 
 class _MedSigLIPEncoder(nn.Module):
     """Wraps google/medsiglip-448 to expose image embeddings."""
+
     def __init__(self, model):
         super().__init__()
         self.model = model.eval()
@@ -123,7 +127,9 @@ class _MedSigLIPEncoder(nn.Module):
             if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
                 return outputs.pooler_output
 
-            raise RuntimeError(f"Could not extract MedSigLIP image features. Got output type: {type(outputs)}")
+            raise RuntimeError(
+                f"Could not extract MedSigLIP image features. Got output type: {type(outputs)}"
+            )
 
 
 class CXP_Model(nn.Module):
@@ -134,9 +140,15 @@ class CXP_Model(nn.Module):
     are frozen (only the clf head is trained).  The classifier/projection
     head architecture is determined by the method_strategy.
     """
-    def __init__(self, method_strategy: BaseMethod, backbone: str = "densenet", use_cached_features: bool = False):
+
+    def __init__(
+        self,
+        method_strategy: BaseMethod,
+        backbone: str = "densenet",
+        use_cached_features: bool = False,
+    ):
         super().__init__()
-        
+
         self.use_cached_features = use_cached_features and backbone != "densenet"
         self.backbone = backbone
 
@@ -145,19 +157,21 @@ class CXP_Model(nn.Module):
             num_features = _get_num_features(backbone)
         else:
             self.encoder, num_features = _build_encoder(backbone)
-            
-        self.clf, self.projection_head = method_strategy.get_model_components(num_features)
+
+        self.clf, self.projection_head = method_strategy.get_model_components(
+            num_features
+        )
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         if self.use_cached_features:
             features = x
         else:
             features = self.encoder(x)
-            
+
         logits = self.clf(features)
 
         if self.projection_head is not None:
-            if getattr(self.projection_head, 'requires_logits', False):
+            if getattr(self.projection_head, "requires_logits", False):
                 projections = self.projection_head((features, logits))
             else:
                 projections = self.projection_head(features)

@@ -15,3 +15,8 @@ wandb/
 .vscode/
 .benchmarks/
 .pytest_cache/
+
+*.egg-info/
+papers/*
+.ruff_cache/
+.mypy_cache/

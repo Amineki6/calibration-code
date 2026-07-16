@@ -1,0 +1,14 @@
+epochs: 2
+batch_size: 4
+num_workers: 0
+
+supcon_lambda: 0.5
+supcon_temperature: 0.1
+mmd_lambda: 1.0
+cdan_lambda: 1.0
+cdan_entropy: true
+score_matching_lambda: 1.0
+dataset_score_matching_lambda: 1.0
+jtt_duration: 1
+jtt_lambda: 4.0
+soft_eo_lambda: 1.0

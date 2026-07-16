@@ -4,12 +4,15 @@ from torcheval.metrics import BinaryAUROC
 import logging
 from typing import Any, Dict, Tuple, Optional
 
+
 def _power_mean(values: np.ndarray, power: float) -> float:
     """Compute a power mean on [0, 1] values with a stable geometric special-case."""
     assert values.ndim == 1 and values.size > 0, "values must be a non-empty 1D array"
-    assert np.all((0.0 <= values) & (values <= 1.0)), "power mean expects values in [0, 1]"
+    assert np.all((0.0 <= values) & (values <= 1.0)), (
+        "power mean expects values in [0, 1]"
+    )
 
-    with np.errstate(divide='ignore', invalid='ignore', over='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         if np.isclose(power, 0.0):
             return float(np.exp(np.mean(np.log(values))))
 
@@ -72,27 +75,32 @@ def compute_group_fairness_score(
     assert torch.is_tensor(logits), "logits must be a torch.Tensor"
     assert torch.is_tensor(labels), "labels must be a torch.Tensor"
     assert torch.is_tensor(groups), "groups must be a torch.Tensor"
-    
+
     # Move to CPU for computation
     logits = logits.cpu()
     labels = labels.cpu()
     groups = groups.cpu()
-    
+
     # Ensure 1D tensors
     assert logits.dim() == 1, f"logits must be 1D, got shape {logits.shape}"
     assert labels.dim() == 1, f"labels must be 1D, got shape {labels.shape}"
     assert groups.dim() == 1, f"groups must be 1D, got shape {groups.shape}"
-    
+
     # Check matching sizes
     n_samples = logits.size(0)
-    assert labels.size(0) == n_samples, f"labels size {labels.size(0)} != logits size {n_samples}"
-    assert groups.size(0) == n_samples, f"groups size {groups.size(0)} != logits size {n_samples}"
-    
+    assert labels.size(0) == n_samples, (
+        f"labels size {labels.size(0)} != logits size {n_samples}"
+    )
+    assert groups.size(0) == n_samples, (
+        f"groups size {groups.size(0)} != logits size {n_samples}"
+    )
+
     # Check label values are binary
     unique_labels = torch.unique(labels)
-    assert torch.all((unique_labels == 0) | (unique_labels == 1)), \
+    assert torch.all((unique_labels == 0) | (unique_labels == 1)), (
         f"labels must be binary (0/1), got unique values: {unique_labels.tolist()}"
-    
+    )
+
     # Filter out samples with missing group info
     # Handle both NaN and negative values (e.g., -1) as missing
     if groups.dtype.is_floating_point:
@@ -100,10 +108,10 @@ def compute_group_fairness_score(
     else:
         # For integer groups, treat negative values as missing
         valid_mask = groups >= 0
-    
+
     n_valid = valid_mask.sum().item()
     n_missing = (~valid_mask).sum().item()
-    
+
     if n_missing > 0:
         logging.debug(
             "[%s] Excluding %d/%d samples with missing group info before fairness computation.",
@@ -111,7 +119,7 @@ def compute_group_fairness_score(
             n_missing,
             n_samples,
         )
-    
+
     if n_valid == 0:
         logging.warning(
             "[%s] Fairness score fallback: 0 valid group-labeled samples (%d total, %d missing). "
@@ -120,23 +128,24 @@ def compute_group_fairness_score(
             n_samples,
             n_missing,
         )
-        return 0.0, {'error': 'no_valid_groups', 'n_missing': n_missing}
-    
+        return 0.0, {"error": "no_valid_groups", "n_missing": n_missing}
+
     # Apply mask to filter valid samples only
     logits = logits[valid_mask]
     labels = labels[valid_mask]
     groups = groups[valid_mask]
-    
+
     # For floating point groups, convert to int after filtering
     if groups.dtype.is_floating_point:
         groups = groups.long()
-    
-    assert groups.dtype in [torch.int32, torch.int64], \
+
+    assert groups.dtype in [torch.int32, torch.int64], (
         f"groups must be integer type after conversion, got {groups.dtype}"
-    
+    )
+
     unique_groups = torch.unique(groups, sorted=True)
     n_groups = len(unique_groups)
-    
+
     assert n_groups > 0, "No groups found after filtering"
     total_pairs = n_groups * (n_groups - 1)
     logging.debug(
@@ -148,8 +157,8 @@ def compute_group_fairness_score(
     )
 
     details: Dict[str, Any] = {
-        'groups': {},
-        'pairwise': {},
+        "groups": {},
+        "pairwise": {},
     }
 
     if n_groups < 2:
@@ -160,21 +169,21 @@ def compute_group_fairness_score(
             scope,
             n_groups,
         )
-        details['error'] = 'insufficient_groups'
-        details['summary'] = {
-            'fairness_score': 0.0,
-            'fairness_power': float(power),
-            'aggregation': _power_mean_name(power),
-            'mean_pairwise_auroc': 0.0,
-            'min_pairwise_auroc': 0.0,
-            'n_valid_pairs': 0,
-            'n_total_pairs': int(total_pairs),
-            'n_groups': int(n_groups),
-            'n_valid_samples': int(n_valid),
-            'n_missing_samples': int(n_missing),
-            'arithmetic_mean': 0.0,
-            'geometric_mean': 0.0,
-            'harmonic_mean': 0.0,
+        details["error"] = "insufficient_groups"
+        details["summary"] = {
+            "fairness_score": 0.0,
+            "fairness_power": float(power),
+            "aggregation": _power_mean_name(power),
+            "mean_pairwise_auroc": 0.0,
+            "min_pairwise_auroc": 0.0,
+            "n_valid_pairs": 0,
+            "n_total_pairs": int(total_pairs),
+            "n_groups": int(n_groups),
+            "n_valid_samples": int(n_valid),
+            "n_missing_samples": int(n_missing),
+            "arithmetic_mean": 0.0,
+            "geometric_mean": 0.0,
+            "harmonic_mean": 0.0,
         }
         return 0.0, details
 
@@ -184,10 +193,10 @@ def compute_group_fairness_score(
 
     for g in unique_groups.tolist():
         group_mask = groups == g
-        details['groups'][f'group_{int(g)}'] = {
-            'n_total': int(group_mask.sum().item()),
-            'n_pos': int((group_mask & positive_mask).sum().item()),
-            'n_neg': int((group_mask & negative_mask).sum().item()),
+        details["groups"][f"group_{int(g)}"] = {
+            "n_total": int(group_mask.sum().item()),
+            "n_pos": int((group_mask & positive_mask).sum().item()),
+            "n_neg": int((group_mask & negative_mask).sum().item()),
         }
 
     for pos_group in unique_groups.tolist():
@@ -200,34 +209,36 @@ def compute_group_fairness_score(
 
             neg_mask = (groups == neg_group) & negative_mask
             n_neg = int(neg_mask.sum().item())
-            pair_key = f'pos_g{int(pos_group)}_neg_g{int(neg_group)}'
+            pair_key = f"pos_g{int(pos_group)}_neg_g{int(neg_group)}"
 
             if n_pos > 0 and n_neg > 0:
                 pair_metric = BinaryAUROC()
                 pair_scores = torch.cat([logits[pos_mask], logits[neg_mask]])
-                pair_labels = torch.cat([
-                    torch.ones(n_pos),
-                    torch.zeros(n_neg),
-                ])
+                pair_labels = torch.cat(
+                    [
+                        torch.ones(n_pos),
+                        torch.zeros(n_neg),
+                    ]
+                )
                 pair_metric.update(pair_scores, pair_labels)
                 pair_auroc = float(pair_metric.compute().item())
                 assert 0.0 <= pair_auroc <= 1.0, f"pair_auroc={pair_auroc} out of range"
 
-                details['pairwise'][pair_key] = {
-                    'auroc': pair_auroc,
-                    'pos_group': int(pos_group),
-                    'neg_group': int(neg_group),
-                    'n_pos': n_pos,
-                    'n_neg': n_neg,
+                details["pairwise"][pair_key] = {
+                    "auroc": pair_auroc,
+                    "pos_group": int(pos_group),
+                    "neg_group": int(neg_group),
+                    "n_pos": n_pos,
+                    "n_neg": n_neg,
                 }
                 pairwise_scores.append(pair_auroc)
             else:
-                details['pairwise'][pair_key] = {
-                    'note': 'insufficient_samples',
-                    'pos_group': int(pos_group),
-                    'neg_group': int(neg_group),
-                    'n_pos': n_pos,
-                    'n_neg': n_neg,
+                details["pairwise"][pair_key] = {
+                    "note": "insufficient_samples",
+                    "pos_group": int(pos_group),
+                    "neg_group": int(neg_group),
+                    "n_pos": n_pos,
+                    "n_neg": n_neg,
                 }
 
     if not pairwise_scores:
@@ -239,21 +250,21 @@ def compute_group_fairness_score(
             n_valid,
             n_groups,
         )
-        details['error'] = 'no_valid_pairwise_aurocs'
-        details['summary'] = {
-            'fairness_score': 0.0,
-            'fairness_power': float(power),
-            'aggregation': _power_mean_name(power),
-            'mean_pairwise_auroc': 0.0,
-            'min_pairwise_auroc': 0.0,
-            'n_valid_pairs': 0,
-            'n_total_pairs': int(total_pairs),
-            'n_groups': int(n_groups),
-            'n_valid_samples': int(n_valid),
-            'n_missing_samples': int(n_missing),
-            'arithmetic_mean': 0.0,
-            'geometric_mean': 0.0,
-            'harmonic_mean': 0.0,
+        details["error"] = "no_valid_pairwise_aurocs"
+        details["summary"] = {
+            "fairness_score": 0.0,
+            "fairness_power": float(power),
+            "aggregation": _power_mean_name(power),
+            "mean_pairwise_auroc": 0.0,
+            "min_pairwise_auroc": 0.0,
+            "n_valid_pairs": 0,
+            "n_total_pairs": int(total_pairs),
+            "n_groups": int(n_groups),
+            "n_valid_samples": int(n_valid),
+            "n_missing_samples": int(n_missing),
+            "arithmetic_mean": 0.0,
+            "geometric_mean": 0.0,
+            "harmonic_mean": 0.0,
         }
         return 0.0, details
 
@@ -261,13 +272,17 @@ def compute_group_fairness_score(
     mean_pairwise_auroc = float(np.mean(pairwise_scores_np))
     min_pairwise_auroc = float(np.min(pairwise_scores_np))
     score = _power_mean(pairwise_scores_np, power)
-    
+
     arithmetic_mean = _power_mean(pairwise_scores_np, 1.0)
     geometric_mean = _power_mean(pairwise_scores_np, 0.0)
     harmonic_mean = _power_mean(pairwise_scores_np, -1.0)
 
-    assert 0.0 <= mean_pairwise_auroc <= 1.0, f"mean_pairwise_auroc={mean_pairwise_auroc} out of range"
-    assert 0.0 <= min_pairwise_auroc <= 1.0, f"min_pairwise_auroc={min_pairwise_auroc} out of range"
+    assert 0.0 <= mean_pairwise_auroc <= 1.0, (
+        f"mean_pairwise_auroc={mean_pairwise_auroc} out of range"
+    )
+    assert 0.0 <= min_pairwise_auroc <= 1.0, (
+        f"min_pairwise_auroc={min_pairwise_auroc} out of range"
+    )
     assert 0.0 <= score <= 1.0, f"score={score} out of range"
 
     invalid_pairs = total_pairs - len(pairwise_scores)
@@ -279,20 +294,20 @@ def compute_group_fairness_score(
             total_pairs,
         )
 
-    details['summary'] = {
-        'fairness_score': float(score),
-        'fairness_power': float(power),
-        'aggregation': _power_mean_name(power),
-        'mean_pairwise_auroc': mean_pairwise_auroc,
-        'min_pairwise_auroc': min_pairwise_auroc,
-        'n_valid_pairs': int(len(pairwise_scores)),
-        'n_total_pairs': int(total_pairs),
-        'n_groups': int(n_groups),
-        'n_valid_samples': int(n_valid),
-        'n_missing_samples': int(n_missing),
-        'arithmetic_mean': float(arithmetic_mean),
-        'geometric_mean': float(geometric_mean),
-        'harmonic_mean': float(harmonic_mean),
+    details["summary"] = {
+        "fairness_score": float(score),
+        "fairness_power": float(power),
+        "aggregation": _power_mean_name(power),
+        "mean_pairwise_auroc": mean_pairwise_auroc,
+        "min_pairwise_auroc": min_pairwise_auroc,
+        "n_valid_pairs": int(len(pairwise_scores)),
+        "n_total_pairs": int(total_pairs),
+        "n_groups": int(n_groups),
+        "n_valid_samples": int(n_valid),
+        "n_missing_samples": int(n_missing),
+        "arithmetic_mean": float(arithmetic_mean),
+        "geometric_mean": float(geometric_mean),
+        "harmonic_mean": float(harmonic_mean),
     }
 
     logging.debug(
@@ -323,7 +338,11 @@ def compute_worst_group_accuracy(logits, labels, group_ids) -> Tuple[float, Dict
         worst_acc: float — minimum per-group accuracy across all groups
         details:   per-group breakdown
     """
-    assert torch.is_tensor(logits) and torch.is_tensor(labels) and torch.is_tensor(group_ids)
+    assert (
+        torch.is_tensor(logits)
+        and torch.is_tensor(labels)
+        and torch.is_tensor(group_ids)
+    )
     logits = logits.view(-1).cpu()
     labels = labels.view(-1).cpu()
     group_ids = group_ids.view(-1).cpu()
@@ -347,10 +366,10 @@ def compute_worst_group_accuracy(logits, labels, group_ids) -> Tuple[float, Dict
         mask = group_ids == g
         acc = (preds[mask] == labels[mask].long()).float().mean().item()
         per_group_acc.append(acc)
-        details[f'group_{g.item()}'] = {'n': int(mask.sum()), 'accuracy': acc}
+        details[f"group_{g.item()}"] = {"n": int(mask.sum()), "accuracy": acc}
 
     worst_acc = float(min(per_group_acc)) if per_group_acc else 0.0
-    details['worst_group_accuracy'] = worst_acc
+    details["worst_group_accuracy"] = worst_acc
     return worst_acc, details
 
 

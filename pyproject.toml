@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shortcutlearning_lightning"
+version = "0.1.0"
+description = "Shortcut Learning Mitigation Training"
+authors = [
+    {name = "Mohamed Amine Kina"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "coolname",
+    "numpy",
+    "optuna",
+    "pandas",
+    "protobuf",
+    "pytest",
+    "pydicom",
+    "pytorch-lightning",
+    "scikit-learn",
+    "sentencepiece",
+    "torch",
+    "torcheval",
+    "torchvision",
+    "tqdm",
+    "transformers",
+    "wandb",
+    "mup",
+    "omegaconf"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = ["tests*", "data*", "csv_data*"]

@@ -85,13 +85,20 @@ def convert_split(dicom_root: Path, jpg_root: Path, jpg_quality: int = 95) -> No
 def check_multi_subdir(dicom_root: Path) -> None:
     """Warn if any first-level directory contains more than one subdirectory."""
     first_level = [p for p in dicom_root.iterdir() if p.is_dir()]
-    multi = {p: subdirs for p in first_level
-             if len(subdirs := [s for s in p.iterdir() if s.is_dir()]) > 1}
+    multi = {
+        p: subdirs
+        for p in first_level
+        if len(subdirs := [s for s in p.iterdir() if s.is_dir()]) > 1
+    }
 
     if not multi:
-        print(f"[{dicom_root.name}] All first-level dirs have exactly one subdirectory.")
+        print(
+            f"[{dicom_root.name}] All first-level dirs have exactly one subdirectory."
+        )
     else:
-        print(f"[{dicom_root.name}] {len(multi)} first-level dirs with >1 subdirectory:")
+        print(
+            f"[{dicom_root.name}] {len(multi)} first-level dirs with >1 subdirectory:"
+        )
         for parent, subdirs in sorted(multi.items()):
             print(f"  {parent.name}/")
             for s in subdirs:
@@ -104,12 +111,21 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="SIIM-ACR DICOM → JPG converter")
-    parser.add_argument("--data_dir", type=Path, default=Path("."),
-                        help="Directory containing dicom-images-train / dicom-images-test")
-    parser.add_argument("--out_dir", type=Path, default=Path("jpg-images"),
-                        help="Output root (subdirs train/ and test/ will be created)")
-    parser.add_argument("--quality", type=int, default=100,
-                        help="JPEG quality (default: 100)")
+    parser.add_argument(
+        "--data_dir",
+        type=Path,
+        default=Path("."),
+        help="Directory containing dicom-images-train / dicom-images-test",
+    )
+    parser.add_argument(
+        "--out_dir",
+        type=Path,
+        default=Path("jpg-images"),
+        help="Output root (subdirs train/ and test/ will be created)",
+    )
+    parser.add_argument(
+        "--quality", type=int, default=100, help="JPEG quality (default: 100)"
+    )
     args = parser.parse_args()
 
     for split in ("train", "test"):

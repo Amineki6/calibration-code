@@ -21,7 +21,9 @@ def load_train_pool(siim_root: Path, jpg_root: Path) -> pd.DataFrame:
     rle = pd.read_csv(train_rle_path, index_col=0)
     tube_dict = pickle.load(open(tube_dict_path, "rb"))
 
-    encoded_col = "EncodedPixels" if "EncodedPixels" in rle.columns else " EncodedPixels"
+    encoded_col = (
+        "EncodedPixels" if "EncodedPixels" in rle.columns else " EncodedPixels"
+    )
 
     # Whitespace-safe PTX parsing and collapse to one row per ImageId.
     # Any non -1 mask for an ImageId marks PTX=1.
@@ -45,9 +47,11 @@ def load_train_pool(siim_root: Path, jpg_root: Path) -> pd.DataFrame:
     df = df[exists_mask].copy()
 
     df["strat_col"] = df.apply(
-        lambda r: "unlabeled"
-        if pd.isna(r["Drain"])
-        else f"{int(r['Pneumothorax'])}_{int(r['Drain'])}",
+        lambda r: (
+            "unlabeled"
+            if pd.isna(r["Drain"])
+            else f"{int(r['Pneumothorax'])}_{int(r['Drain'])}"
+        ),
         axis=1,
     )
     return df[["Path", "Pneumothorax", "Drain", "strat_col"]]
@@ -67,7 +71,9 @@ def load_test_unlabeled_pool(jpg_root: Path) -> pd.DataFrame:
     )
 
 
-def sample_group(df: pd.DataFrame, ptx: int, drain: int, n: int, seed: int) -> pd.DataFrame:
+def sample_group(
+    df: pd.DataFrame, ptx: int, drain: int, n: int, seed: int
+) -> pd.DataFrame:
     grp = df[(df["Pneumothorax"] == ptx) & (df["Drain"] == drain)]
     if len(grp) < n:
         raise ValueError(
@@ -83,7 +89,9 @@ def print_counts(name: str, df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare SIIM drain-shortcut splits for cxr-shortcut.")
+    parser = argparse.ArgumentParser(
+        description="Prepare SIIM drain-shortcut splits for cxr-shortcut."
+    )
     parser.add_argument(
         "--siim_root",
         type=Path,
@@ -145,7 +153,9 @@ def main() -> None:
         ignore_index=False,
     )
 
-    used_mask_labeled = used_mask_labeled | labeled_pool.index.isin(test_misaligned.index)
+    used_mask_labeled = used_mask_labeled | labeled_pool.index.isin(
+        test_misaligned.index
+    )
     labeled_remaining = labeled_pool[~used_mask_labeled].copy()
 
     # Symmetric train/val split over all remaining data (labeled + unlabeled).
@@ -179,7 +189,9 @@ def main() -> None:
     train_df.to_csv(args.out_dir / "train_drain_shortcut.csv", index=False)
     val_df.to_csv(args.out_dir / "val_drain_shortcut.csv", index=False)
     test_aligned.to_csv(args.out_dir / "test_drain_shortcut_aligned.csv", index=False)
-    test_misaligned.to_csv(args.out_dir / "test_drain_shortcut_misaligned.csv", index=False)
+    test_misaligned.to_csv(
+        args.out_dir / "test_drain_shortcut_misaligned.csv", index=False
+    )
 
     print_counts("Train", train_df)
     print_counts("Train labeled subset", train_labeled)

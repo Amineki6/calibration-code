@@ -7,23 +7,24 @@ from .score_matching_dataset import DatasetScoreMatchingMethod
 from .jtt import JTTMethod
 from .soft_equalized_odds import SoftEqualizedOddsMethod
 
-def get_method(method_name, config):
+
+def get_method(method, config):
     """Factory function to initialize the correct strategy."""
-    if method_name == "standard":
+    if method == "standard":
         return StandardMethod(config)
-    elif method_name == "supcon":
+    elif method == "supcon":
         return SupConMethod(config)
-    elif method_name == 'mmd':
+    elif method == "mmd":
         return MMDMethod(config)
-    elif method_name == 'cdan':
+    elif method == "cdan":
         return CDANMethod(config)
-    elif method_name == 'score_matching':
+    elif method == "score_matching":
         return ScoreMatchingMethod(config)
-    elif method_name == 'dataset_score_matching':
-        return DatasetScoreMatchingMethod(config)    
-    elif method_name == 'jtt':
+    elif method == "dataset_score_matching":
+        return DatasetScoreMatchingMethod(config)
+    elif method == "jtt":
         return JTTMethod(config)
-    elif method_name == 'soft_equalized_odds':
+    elif method == "soft_equalized_odds":
         return SoftEqualizedOddsMethod(config)
     else:
-        raise ValueError(f"Method '{method_name}' not implemented.")
+        raise ValueError(f"Method '{method}' not implemented.")

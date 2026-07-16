@@ -1,0 +1,56 @@
+# Core Settings
+method: "standard"
+backbone: "densenet"
+use_cached_features: false
+select_chkpt_on: "fairness"
+
+# General Hyperparameters
+lr: 0.0001
+weight_decay: 0.005
+ema_decay: 0.9
+
+# Method-Specific Hyperparameters
+supcon_lambda: 0.50
+supcon_temperature: 0.10
+
+mmd_lambda: 1.0
+
+cdan_lambda: 1.0
+cdan_entropy: true
+
+score_matching_lambda: 10.0
+score_matching_min_subgroup_count: 1
+
+dataset_score_matching_lambda: 10.0
+dataset_score_matching_min_subgroup_count: 10
+
+soft_eo_lambda: 1.0
+soft_eo_mode: "both"
+soft_eo_tau: 0.5
+soft_eo_min_subgroup_count: 1
+soft_eo_temp_start: 0.0
+soft_eo_temp_end: 25.0
+soft_eo_temp_schedule_epochs: 25
+
+jtt_duration: 1
+jtt_lambda: 4.0
+
+# Data & Checkpointing
+balance_train: false
+balance_val: false
+fairness_power: -1.0
+
+# Training Loop Constants
+epochs: 150
+batch_size: 64
+num_runs: 1
+num_workers: 12
+seed: 42
+
+# Paths
+data_dir: "data"
+csv_dir: "csv_data"
+out_dir: "runs"
+features_dir: "features_cache"
+
+comment: "No comment provided"

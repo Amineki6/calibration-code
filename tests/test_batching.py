@@ -113,7 +113,9 @@ def test_dataset_returns_mapping_with_weight_field():
 
 def test_lightning_module_uses_normalized_batch_data():
     method = DummyMethod()
-    module = CXPLightningModule(cast(Any, DummyLightningModel()), method, ExperimentConfig(backbone="medsiglip"))
+    module = CXPLightningModule(
+        cast(Any, DummyLightningModel()), method, ExperimentConfig(backbone="medsiglip")
+    )
     module.log = lambda *args, **kwargs: None
     module.test_method_aligned = method
     module.test_method_misaligned = method
@@ -162,8 +164,12 @@ def test_identify_error_set_accepts_weighted_and_unweighted_batches():
         weights=torch.tensor([1.0, 3.0]),
     )
 
-    errors_unweighted = identify_error_set(DummyIdentifyModel(), None, [batch4], device=torch.device("cpu"))
-    errors_weighted = identify_error_set(DummyIdentifyModel(), None, [batch5], device=torch.device("cpu"))
+    errors_unweighted = identify_error_set(
+        DummyIdentifyModel(), None, [batch4], device=torch.device("cpu")
+    )
+    errors_weighted = identify_error_set(
+        DummyIdentifyModel(), None, [batch5], device=torch.device("cpu")
+    )
 
     assert errors_unweighted == {0}
     assert errors_weighted == {0}

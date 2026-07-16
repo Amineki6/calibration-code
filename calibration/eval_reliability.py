@@ -1,7 +1,12 @@
 import argparse
 import logging
 import pathlib
+import sys
 from pathlib import Path
+
+# Add project root to sys.path so we can import config, model, etc.
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 from typing import Any
 
 import pandas as pd
@@ -62,6 +67,7 @@ def parse_args() -> argparse.Namespace:
 
 def _windows_safe_torch_load(checkpoint_path: Path) -> dict[str, Any]:
     import os
+
     torch.serialization.add_safe_globals(
         [
             ExperimentConfig,
@@ -74,12 +80,12 @@ def _windows_safe_torch_load(checkpoint_path: Path) -> dict[str, Any]:
 
     original_posix_path = pathlib.PosixPath
     original_windows_path = pathlib.WindowsPath
-    
-    if os.name == 'nt':
+
+    if os.name == "nt":
         pathlib.PosixPath = pathlib.WindowsPath
     else:
         pathlib.WindowsPath = pathlib.PosixPath
-        
+
     try:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     finally:
@@ -91,10 +97,14 @@ def _windows_safe_torch_load(checkpoint_path: Path) -> dict[str, Any]:
     return checkpoint
 
 
-def _resolve_config(checkpoint: dict[str, Any], args: argparse.Namespace) -> ExperimentConfig:
+def _resolve_config(
+    checkpoint: dict[str, Any], args: argparse.Namespace
+) -> ExperimentConfig:
     config = ExperimentConfig()
     hyper_parameters = checkpoint.get("hyper_parameters", {})
-    ckpt_config = hyper_parameters.get("config") if isinstance(hyper_parameters, dict) else None
+    ckpt_config = (
+        hyper_parameters.get("config") if isinstance(hyper_parameters, dict) else None
+    )
 
     if isinstance(ckpt_config, ExperimentConfig):
         config = ckpt_config
@@ -179,10 +189,12 @@ def _predict(
     device: torch.device,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    enable_autocast = (device.type == "cuda")
+    enable_autocast = device.type == "cuda"
     for batch in dataloader:
         with torch.cuda.amp.autocast(enabled=enable_autocast):
-            logits_tensor, _ = module.ema_model(batch.inputs.to(device, non_blocking=True))
+            logits_tensor, _ = module.ema_model(
+                batch.inputs.to(device, non_blocking=True)
+            )
         logits_fp32 = logits_tensor.reshape(-1).float()
         probs = torch.sigmoid(logits_fp32).cpu()
         logits_cpu = logits_fp32.cpu()
@@ -208,7 +220,9 @@ def _run_reliability_plot(merged_df: pd.DataFrame, output_dir: Path) -> None:
     finite_drain = pd.to_numeric(merged_df["drain"], errors="coerce")
     plot_df = merged_df[finite_drain.isin([0.0, 1.0])].copy()
     if plot_df.empty:
-        raise RuntimeError("No samples with drain in {0,1}; cannot make drain-group reliability diagram")
+        raise RuntimeError(
+            "No samples with drain in {0,1}; cannot make drain-group reliability diagram"
+        )
 
     plot_df["drain"] = plot_df["drain"].astype(int)
     plot_df["label"] = plot_df["label"].astype(bool)
@@ -239,21 +253,23 @@ def main() -> None:
     # Set identical PyTorch optimizations as train.py to ensure precision parity
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = False
-    torch.set_float32_matmul_precision('high')
+    torch.set_float32_matmul_precision("high")
 
     args = parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
 
     checkpoint = _windows_safe_torch_load(args.checkpoint)
     config = _resolve_config(checkpoint, args)
 
     logging.info(
         "Checkpoint loaded. method=%s backbone=%s",
-        config.method_name,
+        config.method,
         config.backbone,
     )
 
-    method = methods.get_method(config.method_name, config)
+    method = methods.get_method(config.method, config)
     model = CXP_Model(
         method_strategy=method,
         backbone=config.backbone,
@@ -265,9 +281,15 @@ def main() -> None:
         raise ValueError("Checkpoint does not contain a valid state_dict")
     missing, unexpected = module.load_state_dict(state_dict, strict=False)
     if missing:
-        logging.warning("Missing state_dict keys (%d), sample=%s", len(missing), missing[:5])
+        logging.warning(
+            "Missing state_dict keys (%d), sample=%s", len(missing), missing[:5]
+        )
     if unexpected:
-        logging.warning("Unexpected state_dict keys (%d), sample=%s", len(unexpected), unexpected[:5])
+        logging.warning(
+            "Unexpected state_dict keys (%d), sample=%s",
+            len(unexpected),
+            unexpected[:5],
+        )
 
     device = _resolve_device(args.device)
     module.to(device)
@@ -277,7 +299,9 @@ def main() -> None:
 
     loader_aligned, loader_misaligned = _build_test_loaders(config)
     df_aligned = _predict(module, loader_aligned, split_name="aligned", device=device)
-    df_misaligned = _predict(module, loader_misaligned, split_name="misaligned", device=device)
+    df_misaligned = _predict(
+        module, loader_misaligned, split_name="misaligned", device=device
+    )
     merged_df = pd.concat([df_aligned, df_misaligned], ignore_index=True)
 
     output_dir = args.output_dir
